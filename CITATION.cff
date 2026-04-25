@@ -15,8 +15,6 @@ authors:
   - family-names: Kalyan
     given-names: Pavan
     alias: Cintu07
-    email: ""
-    affiliation: "Lexideck Technologies"
 repository-code: "https://github.com/Cintu07/helix"
 license: "BUSL-1.1"
 version: "2.1.0"
