@@ -1,5 +1,5 @@
 """
-Helix — Phase-Rotation Sequence Memory Architecture
+Helix - Phase-Rotation Sequence Memory Architecture
 
 Core cell: phase angles accumulate over time instead of decaying via
 contractive multiplication. A soft quantization sieve snaps phases to a
@@ -7,8 +7,8 @@ pi/4 grid for discrete stability. Multi-harmonic readout (cos/sin at
 harmonics 1, 2, 4, 8) extracts a rich feature vector from a single angle.
 
 Two cell variants:
-  HelixCell       — used by the crystal substrate (has full_state param)
-  HelixNeuronCell — cleaner v2 for training tasks
+  HelixCell       - used by the crystal substrate (has full_state param)
+  HelixNeuronCell - cleaner v2 for training tasks
 """
 import torch
 import torch.nn as nn
@@ -18,12 +18,18 @@ HARMONICS_STANDARD = [1, 2, 4, 8]
 HARMONICS_7OCTAVE  = [0.125, 0.25, 0.5, 1, 2, 4, 8]
 HARMONICS_SPINOR   = [0.5, 1, 2, 4]
 
+# Multi-clock band speeds inspired by Yarnix.
+# Maps to brain oscillation bands: ultra-fast (gamma), fast (beta),
+# slow (alpha), ultra-slow (theta).
+CLOCK_SPEEDS_DEFAULT = (0.50, 0.80, 0.95, 0.999)
+
 
 class HelixCell(nn.Module):
     def __init__(self, input_size, hidden_size, harmonics=[1, 2, 4, 8],
                  use_spinor=True, quantization_strength=0.125,
                  use_binary_alignment=False, unwinding_mode=False,
-                 persistence=1.0, spin_multiplier=None, full_state=True):
+                 persistence=1.0, spin_multiplier=None, full_state=True,
+                 clock_speeds=None):
         super(HelixCell, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -32,10 +38,44 @@ class HelixCell(nn.Module):
         self.quantization_strength = quantization_strength
         self.use_binary_alignment = use_binary_alignment
         self.unwinding_mode = unwinding_mode
-        self.persistence = persistence
         self.full_state = full_state
         self.spin_multiplier = spin_multiplier if spin_multiplier is not None else (2.0 if use_spinor else 1.0)
         self.unwind_threshold = nn.Parameter(torch.tensor(np.pi - 0.1))
+
+        # Multi-clock persistence. When clock_speeds is given each neuron
+        # group gets its own persistence value. Without it, falls back to
+        # the scalar persistence parameter (original behavior).
+        self.clock_speeds = clock_speeds
+        if clock_speeds is not None:
+            n_bands = len(clock_speeds)
+            assert hidden_size % n_bands == 0, (
+                f"hidden_size ({hidden_size}) must be divisible by "
+                f"n_bands ({n_bands}) when using clock_speeds"
+            )
+            band_size = hidden_size // n_bands
+            vec = []
+            for speed in clock_speeds:
+                vec.extend([speed] * band_size)
+            self.register_buffer(
+                'persistence_vec',
+                torch.tensor(vec, dtype=torch.float32)
+            )
+            self.persistence = None  # not used when clock_speeds is set
+
+            # Cross-band mixer: lets fast and slow bands inform each other.
+            self.band_mixer = nn.Sequential(
+                nn.Linear(hidden_size, hidden_size),
+                nn.GELU(),
+                nn.Linear(hidden_size, hidden_size),
+            )
+            for m in self.band_mixer.modules():
+                if isinstance(m, nn.Linear):
+                    nn.init.kaiming_uniform_(m.weight)
+                    nn.init.zeros_(m.bias)
+        else:
+            self.persistence = persistence
+            self.persistence_vec = None
+            self.band_mixer = None
 
         self.weight_ih = nn.Parameter(torch.Tensor(input_size, hidden_size * 2))
         self.weight_hh = nn.Parameter(torch.Tensor(hidden_size, hidden_size * 2))
@@ -85,7 +125,12 @@ class HelixCell(nn.Module):
                 bit_out = incoming_bit
         else:
             phi_shift = (torch.sigmoid(phi_gate) * np.pi * multiplier)
-            phi_next = (h_prev * self.persistence) + phi_shift
+            # Use per-neuron persistence vector when clock_speeds was set,
+            # otherwise use the scalar persistence value (original behavior).
+            if self.persistence_vec is not None:
+                phi_next = h_prev * self.persistence_vec + phi_shift
+            else:
+                phi_next = (h_prev * self.persistence) + phi_shift
             q_sieve = torch.round(phi_next / (np.pi / 4)) * (np.pi / 4)
             phi_next = phi_next + self.quantization_strength * (q_sieve - phi_next)
 
@@ -100,6 +145,11 @@ class HelixCell(nn.Module):
 
         confidence = (h_cos.abs() / len(self.harmonics)).detach()
         output = standard_part * (1.0 + self.epsilon * (h_cos + h_sin) * 0.5)
+
+        # Cross-band mixer: routes information between fast and slow neuron
+        # groups so each timescale can inform the others.
+        if self.band_mixer is not None:
+            output = output + 0.1 * self.band_mixer(output)
 
         if self.use_binary_alignment:
             output = output + 0.1 * h_cos
