@@ -19,6 +19,7 @@ import numpy as np
 import hashlib
 import os
 import struct
+import math
 
 
 class PhiCrypt:
@@ -82,12 +83,12 @@ class PhiCrypt:
             key_material += h
             counter += 1
         
-        # Convert bytes to float32 array
+        # Consume all derived bytes so each angle uses the full 32-bit chunk.
         key_bytes = key_material[:needed_bytes]
-        raw = np.frombuffer(key_bytes, dtype=np.uint8).astype(np.float32)
-        
-        # Map [0, 255] → [0, 2*pi)
-        rotation = torch.tensor(raw[:hidden_size] / 255.0 * 2 * np.pi)
+        raw = np.frombuffer(key_bytes, dtype=np.uint32).astype(np.float64)
+
+        # Map [0, 2^32) → [0, 2*pi)
+        rotation = torch.from_numpy((raw / 2**32) * 2 * np.pi).to(torch.float32)
         
         return rotation
     
@@ -253,11 +254,21 @@ class PhiCrypt:
     @staticmethod
     def verify_encryption(original_phi, encrypted_phi):
         """
-        Verify that encrypted data appears random.
-        Returns correlation between original and encrypted (should be near 0).
+        Verify that encrypted rotations are not concentrated around one angle.
+        Uses the resultant length of the circular mean and a Rayleigh-style
+        p-value so small phase vectors do not fail randomly.
         """
-        cos_corr = torch.cos(original_phi - encrypted_phi).mean().item()
+        delta = (encrypted_phi - original_phi).reshape(-1)
+        mean_cos = torch.cos(delta).mean().item()
+        mean_sin = torch.sin(delta).mean().item()
+        circular_bias = math.hypot(mean_cos, mean_sin)
+        sample_count = max(delta.numel(), 1)
+        rayleigh_z = sample_count * circular_bias * circular_bias
+        p_value = math.exp(-rayleigh_z)
+
         return {
-            'correlation': cos_corr,
-            'is_secure': abs(cos_corr) < 0.1  # Should be uncorrelated
+            'correlation': mean_cos,
+            'circular_bias': circular_bias,
+            'p_value': p_value,
+            'is_secure': p_value > 0.01
         }

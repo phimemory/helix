@@ -76,6 +76,27 @@ GRU wins on raw MSE because sine prediction is a continuous curve-fitting proble
 
 Helix wins decisively on lossless discrete recall. GRU wins on continuous approximation. The claim is narrow and specific: for tasks requiring exact recall of discrete sequential structure, Helix achieves it with orders of magnitude fewer parameters and a structural guarantee that the update rule cannot provide.
 
+## Hybrid memory (recommended product surface)
+
+Core Helix is an **encoder** (sequence → phase φ). That alone is not an LLM context layer.
+
+`hybrid/` closes the gap:
+
+| piece | job |
+|-------|-----|
+| Helix φ | order-sensitive trajectory fingerprint |
+| `PhaseReadout` | **trained** map φ → class + reconstructed embedding |
+| FactStore / HelixDB | stores the actual **text** the LLM reads |
+| `HybridMemory.context_block()` | pasteable agent context |
+
+```bash
+python -m hybrid.demo --epochs 50 --save hybrid_ckpt
+```
+
+Typical trained result: ~100% trajectory classification, ~0.9 recon cosine on synthetic sessions. See [`hybrid/README.md`](hybrid/README.md).
+
+Optional fact backend: [HelixDB](https://helix-db.com) via `HELIXDB_URL` + `--backend helixdb`.
+
 ## Crystal suite
 
 Built on top of the core cell: a full memory system for production use.

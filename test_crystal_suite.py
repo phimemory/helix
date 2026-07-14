@@ -259,8 +259,11 @@ def test_phicrypt():
     
     # Verify encryption scrambles the data
     verify = crypt.verify_encryption(phi_original, encrypted)
-    check(verify['is_secure'], f"Encryption not secure: correlation={verify['correlation']:.3f}")
-    print(f"  Encryption correlation: {verify['correlation']:.3f} (should be ~0)")
+    check(
+        verify['is_secure'],
+        f"Encryption not secure: circular_bias={verify['circular_bias']:.3f}, p={verify['p_value']:.3g}",
+    )
+    print(f"  Encryption circular bias: {verify['circular_bias']:.3f}, p={verify['p_value']:.3g}")
     
     # Wrong passphrase should produce wrong result
     wrong_decrypt = crypt.decrypt(encrypted, "wrong_password", salt)
