@@ -1,3 +1,5 @@
 torch>=2.0
 numpy
 matplotlib
+# hybrid memory layer uses stdlib sqlite only
+# optional: run HelixDB separately and set HELIXDB_URL for graph-vector facts
