@@ -26,7 +26,7 @@ Helix stores memory as phase angles that accumulate over time instead of decayin
 
 ### 16-bit parity
 
-1 Helix neuron (16 parameters) vs 128 GRU neurons (50,562 parameters). Task: compute XOR of 16 input bits. Requires remembering every bit without any error.
+1 Helix neuron (169 parameters) vs 128 GRU neurons (50,433 parameters). Task: compute XOR of 16 input bits. Requires remembering every bit without any error.
 
 ![parity benchmark](results/parity_benchmark.png)
 
